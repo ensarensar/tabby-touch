@@ -3,19 +3,22 @@
 #include <stdint.h>
 
 /*
- * tabby-touch 1.2.0 — MQTT sozlesmesi (Tabby Admin)
+ * tabby-touch 1.2.1 — MQTT sozlesmesi (Tabby Admin)
  * -------------------------------------------------
  * Broker anonim: kullanici/sifre YOK, TLS YOK, port 1883.
  * Kok: tabby/touch/<MAC>/...
  * MAC: STA, buyuk harf, iki nokta yok (ornek AABBCCDDEEFF).
  *
- * durum      cihaz->broker  retained + LWT offline
+ * durum      cihaz->broker  retained + LWT offline (will retain)
+ *            Baglaninca ve her 60 sn yenilenir; bayrak ikisinde de retained.
  * olay       cihaz->broker  retained degil, gecis olayi
  * olay/cevap broker->cihaz  retained degil
  * komut      broker->cihaz  retained degil, Ed25519 imzali
  * komut/cevap cihaz->broker retained degil
  * qr         broker->cihaz  retained, tek kullanimlik kod
+ *            Cihaz bu konuya YAYINLAMAZ. Yalnizca abone olur.
  * ayar       broker->cihaz  retained, qr ile ayni kod alani (yedek konu)
+ *            Cihaz bu konuya YAYINLAMAZ. Yalnizca abone olur.
  * ota        broker->cihaz  retained degil
  * ota/durum  cihaz->broker  retained degil
  *
@@ -48,7 +51,7 @@
  * Eksik arg = {}.
  */
 
-#define TABBY_FW_SURUM "1.2.0"
+#define TABBY_FW_SURUM "1.2.1"
 #define TABBY_VARYANT "cyd"
 #define TABBY_TIP "touch"
 #define TABBY_MQTT_KOK "tabby/touch"

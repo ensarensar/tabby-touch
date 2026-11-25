@@ -60,10 +60,10 @@ static const uint8_t QR_KOD_LEN = 22;
  * Cihaz ayakta izleme (her 60 sn, JWT yok):
  * POST https://<hastane-ip>:8000/tabby-touch-hardbeard
  * { "cihazId": "tabby-touch-1", "mac": "...", "ip": "...",
- *   "online": true, "surum": "1.2.0" }
+ *   "online": true, "surum": "1.2.1" }
  * Sunucu: { "ok": true }
- * Imzali OTA ornek yol: /firmware-ota/touch/cyd/1.2.1.bin
- *   https://10.85.1.77:8000/firmware-ota/touch/cyd/1.2.1.bin
+ * Imzali OTA ornek yol: /firmware-ota/touch/cyd/1.2.2.bin
+ *   https://10.85.1.77:8000/firmware-ota/touch/cyd/1.2.2.bin
  *
  * Tek kullanimlik QR (her 10 sn):
  * POST /tabby-touch/qr

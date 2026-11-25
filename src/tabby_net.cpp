@@ -113,7 +113,16 @@ void tabbyNtpKur() {
 
 bool tabbyMqttYayin(const char *konu, const char *govde, bool retained) {
   if (!konu || !konu[0] || !govde || !mqtt.connected()) return false;
-  return mqtt.publish(konu, govde, retained);
+  // qr / ayar sunucunun retained yapilandirmasi. Cihaz bu konulara yazmaz;
+  // HTTP yedek de MQTT'ye kopyalamaz, yalnizca ekran tamponunu doldurur.
+  if ((topicQr[0] && strcmp(konu, topicQr) == 0) ||
+      (topicAyar[0] && strcmp(konu, topicAyar) == 0)) {
+    Serial.printf("MQTT yayin reddedildi (sunucu konusu) %s\n", konu);
+    return false;
+  }
+  const uint8_t *bayt = reinterpret_cast<const uint8_t *>(govde);
+  return mqtt.publish(konu, bayt, static_cast<unsigned>(strlen(govde)),
+                      retained);
 }
 
 void tabbyQrOku(char *dst, size_t n) {
@@ -204,6 +213,8 @@ static void durumYayin() {
            TABBY_TIP, TABBY_VARYANT, TABBY_FW_SURUM,
            WiFi.localIP().toString().c_str(), WiFi.RSSI(),
            (unsigned long)(millis() / 1000));
+  // Retained. Canli aboneye giden kopyada retain biti MQTT 3.1.1 geregi 0
+  // gorunur; broker deposundaki son mesaj retained kalir.
   if (tabbyMqttYayin(topicDurum, govde, true)) sonDurum = millis();
 }
 
@@ -211,7 +222,13 @@ static bool mqttBaglan() {
   if (!konuHazir) konulariKur();
   if (!konuHazir) return false;
   willDoldur();
-  bool ok = mqtt.connect(clientId, topicDurum, 1, true, willBuf);
+  // willRetain=true, QoS 1. Temiz DISCONNECT will'i iptal eder; dususte
+  // broker ayni konuda offline'i retained olarak saklar.
+  const uint8_t willQos = 1;
+  const bool willRetain = true;
+  const bool cleanSession = true;
+  bool ok = mqtt.connect(clientId, nullptr, nullptr, topicDurum, willQos,
+                         willRetain, willBuf, cleanSession);
   if (!ok) {
     Serial.printf("MQTT baglanamadi rc=%d %s:%u\n", mqtt.state(),
                   TABBY_SITE_AKTIF.mqttHost, TABBY_SITE_AKTIF.mqttPort);

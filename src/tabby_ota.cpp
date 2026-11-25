@@ -10,8 +10,9 @@
 #include <Preferences.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
+#include "tabby_mmap.h"
+
 #include <esp_ota_ops.h>
-#include <esp_partition.h>
 #include <stdio.h>
 #include <string.h>
 

@@ -201,12 +201,7 @@ bool tabbyUrlUygun(const char *url) {
   host[i] = 0;
   if (!i) return false;
   hostKucult(host);
-  if (strcmp(host, TABBY_SITE_AKTIF.serverHost) == 0) return true;
-  if (TABBY_SITE_AKTIF.ekHost[0] &&
-      strcmp(host, TABBY_SITE_AKTIF.ekHost) == 0) {
-    return true;
-  }
-  return false;
+  return strcmp(host, TABBY_SITE_AKTIF.serverHost) == 0;
 }
 
 void tabbySha256Baslat() {

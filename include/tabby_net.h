@@ -6,6 +6,7 @@
 #include <stddef.h>
 
 void tabbyNetBaslat();
+void tabbyNtpKur();
 void tabbyOtaBoot();
 
 bool tabbyGecisSor(const char *regno, ApiResult &out, uint32_t bekleMs);

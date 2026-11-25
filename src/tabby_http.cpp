@@ -10,14 +10,43 @@
 #include <HTTPUpdate.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
+#include <string.h>
 
-void tabbyTlsKur(WiFiClientSecure &istemci) {
-#if TABBY_TLS_CA_KULLAN
-  istemci.setCACert(TABBY_SERVER_CA_PEM);
-#else
-  istemci.setInsecure();
-#endif
-  istemci.setHandshakeTimeout(12);
+TabbyTlsIstemci::TabbyTlsIstemci(bool pinZorunlu) : pinZorunlu_(pinZorunlu) {}
+
+int TabbyTlsIstemci::pinSonrasi(int ok) {
+  if (ok != 1) return ok;
+  uint8_t uzak[32];
+  const bool okundu = getFingerprintSHA256(uzak);
+  const bool ayni =
+      okundu && memcmp(uzak, TABBY_TLS_PARMAK_IZI, sizeof uzak) == 0;
+  if (ayni) {
+    static bool yazildi = false;
+    if (!yazildi) {
+      Serial.println("TLS parmak izi ok");
+      yazildi = true;
+    }
+    return 1;
+  }
+  if (pinZorunlu_) {
+    Serial.println("TLS parmak izi reddedildi");
+    stop();
+    return 0;
+  }
+  Serial.println("TLS parmak izi uyusmadi, HTTP yedek suruyor");
+  return 1;
+}
+
+int TabbyTlsIstemci::connect(const char *host, uint16_t port, int32_t timeout) {
+  setInsecure();
+  setHandshakeTimeout(15);
+  return pinSonrasi(WiFiClientSecure::connect(host, port, timeout));
+}
+
+int TabbyTlsIstemci::connect(IPAddress ip, uint16_t port, int32_t timeout) {
+  setInsecure();
+  setHandshakeTimeout(15);
+  return pinSonrasi(WiFiClientSecure::connect(ip, port, timeout));
 }
 
 static String jsonMetin(JsonVariantConst v) {
@@ -139,8 +168,7 @@ bool tabbyHttpGonder(const char *url, const char *govde, int zamanAsimiMs,
   yanit = "";
   if (!url || !url[0] || WiFi.status() != WL_CONNECTED) return false;
 
-  WiFiClientSecure istemci;
-  tabbyTlsKur(istemci);
+  TabbyTlsIstemci istemci(false);
 
   HTTPClient http;
   http.setTimeout(zamanAsimiMs);
@@ -291,8 +319,7 @@ bool tabbyHttpOtaEski(const char *url) {
   if (!url || !tabbyUrlUygun(url)) return false;
   tabbyEkranAyarla(1, "Guncelleniyor", FIRMWARE_VERSION);
   tabbyOtaSuruyorAyar(true);
-  WiFiClientSecure istemci;
-  tabbyTlsKur(istemci);
+  TabbyTlsIstemci istemci(true);
   istemci.setTimeout(30);
   httpUpdate.rebootOnUpdate(true);
   httpUpdate.onProgress([](int cur, int total) {

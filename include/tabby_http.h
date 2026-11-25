@@ -6,7 +6,18 @@
 #include <ArduinoJson.h>
 #include <WiFiClientSecure.h>
 
-void tabbyTlsKur(WiFiClientSecure &istemci);
+// pinZorunlu: OTA. Parmak izi uyusmazsa baglanti kapanir.
+// HTTP yedekte pinZorunlu false: uyusmazsa loglanir, istek surer.
+class TabbyTlsIstemci : public WiFiClientSecure {
+ public:
+  explicit TabbyTlsIstemci(bool pinZorunlu);
+  int connect(const char *host, uint16_t port, int32_t timeout) override;
+  int connect(IPAddress ip, uint16_t port, int32_t timeout) override;
+
+ private:
+  bool pinZorunlu_;
+  int pinSonrasi(int ok);
+};
 
 bool tabbyHttpGonder(const char *url, const char *govde, int zamanAsimiMs,
                      int &kod, String &yanit);

@@ -100,6 +100,17 @@ static bool mqttHazir = false;
 
 const char *tabbyKonuOtaDurum() { return topicOtaDurum; }
 
+void tabbyNtpKur() {
+  const char *s3 = TABBY_SITE_AKTIF.ntp3;
+  if (s3 && s3[0]) {
+    configTime(0, 0, TABBY_SITE_AKTIF.ntp1, TABBY_SITE_AKTIF.ntp2, s3);
+  } else {
+    configTime(0, 0, TABBY_SITE_AKTIF.ntp1, TABBY_SITE_AKTIF.ntp2);
+  }
+  Serial.printf("NTP %s %s %s\n", TABBY_SITE_AKTIF.ntp1, TABBY_SITE_AKTIF.ntp2,
+                (s3 && s3[0]) ? s3 : "-");
+}
+
 bool tabbyMqttYayin(const char *konu, const char *govde, bool retained) {
   if (!konu || !konu[0] || !govde || !mqtt.connected()) return false;
   return mqtt.publish(konu, govde, retained);
@@ -907,8 +918,7 @@ static void otaBaslat() {
 
 static void tabbyNetAdim() {
   if (WiFi.status() == WL_CONNECTED && !zamanKuruldu) {
-    configTime(0, 0, "pool.ntp.org", "time.google.com",
-               TABBY_SITE_AKTIF.ntpEk ? TABBY_SITE_AKTIF.ntpEk : "pool.ntp.org");
+    tabbyNtpKur();
     zamanKuruldu = true;
   }
   if (tabbyOtaSuruyor()) return;

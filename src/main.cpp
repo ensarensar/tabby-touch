@@ -322,8 +322,7 @@ bool connectWifi() {
   }
 
   if (WiFi.status() == WL_CONNECTED) {
-    configTime(0, 0, "pool.ntp.org", "time.google.com",
-               TABBY_SITE_AKTIF.ntpEk ? TABBY_SITE_AKTIF.ntpEk : "pool.ntp.org");
+    tabbyNtpKur();
     showBootScreen("Baglandi", true);
     Serial.printf("WiFi OK SSID=%s RSSI=%d dBm IP=%s MAC=%s\n",
                   WiFi.SSID().c_str(),

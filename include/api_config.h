@@ -58,12 +58,12 @@ static const uint8_t QR_KOD_LEN = 22;
  * Alias: serbestBirak, kapiAc, roleCek, ac, open, kirmizi, redCode, alarm
  *
  * Cihaz ayakta izleme (her 60 sn, JWT yok):
- * POST https://tabbby.izmirsh.com:8000/tabby-touch-hardbeard
+ * POST https://<hastane-ip>:8000/tabby-touch-hardbeard
  * { "cihazId": "tabby-touch-1", "mac": "...", "ip": "...",
- *   "online": true, "surum": "1.1.0" }
+ *   "online": true, "surum": "1.2.0" }
  * Sunucu: { "ok": true }
- * OTA: { "ok": true, "guncelle": true, "surum": "1.2.0",
- *        "url": "https://tabbby.izmirsh.com:8000/tabby-touch/firmware.bin" }
+ * Imzali OTA ornek yol: /firmware-ota/touch/cyd/1.2.1.bin
+ *   https://10.85.1.77:8000/firmware-ota/touch/cyd/1.2.1.bin
  *
  * Tek kullanimlik QR (her 10 sn):
  * POST /tabby-touch/qr

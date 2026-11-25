@@ -223,8 +223,7 @@ bool tabbyOtaImzali(const TabbyOtaIstek &istek) {
   tabbyOtaSuruyorAyar(true);
   otaDurumYayin(id, "indiriliyor", 0, "", surum);
 
-  WiFiClientSecure istemci;
-  tabbyTlsKur(istemci);
+  TabbyTlsIstemci istemci(true);
   istemci.setTimeout(30);
 
   HTTPClient http;

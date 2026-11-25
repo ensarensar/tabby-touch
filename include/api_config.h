@@ -1,13 +1,14 @@
 #pragma once
 
-static const char *API_URL = "https://10.85.1.77:8000/tabby-touch";
-static const char *API_GECIS_URL = "https://10.85.1.77:8000/tabby-touch/gecis";
-static const char *API_KOD_PREFIX = "https://10.85.1.77:8000/tabby-touch/kod/";
-static const char *API_KOMUT_URL = "https://10.85.1.77:8000/tabby-touch/komut";
-static const char *API_QR_URL = "https://10.85.1.77:8000/tabby-touch/qr";
-static const char *API_HEARTBEAT_URL =
-    "https://tabbby.izmirsh.com:8000/tabby-touch-hardbeard";
-static const char *FIRMWARE_VERSION = "1.1.1";
+#include "tabby_config.h"
+
+#define API_URL (TABBY_SITE_AKTIF.apiRoot)
+#define API_GECIS_URL (TABBY_SITE_AKTIF.apiGecis)
+#define API_KOD_PREFIX (TABBY_SITE_AKTIF.apiKodOnek)
+#define API_KOMUT_URL (TABBY_SITE_AKTIF.apiKomut)
+#define API_QR_URL (TABBY_SITE_AKTIF.apiQr)
+#define API_HEARTBEAT_URL (TABBY_SITE_AKTIF.apiHeartbeat)
+#define FIRMWARE_VERSION TABBY_FW_SURUM
 static const char *CIHAZ_ID = "tabby-touch-1";
 static const char *CIHAZ_ADI_GIRIS = "Tabby Touch Giriş";
 static const char *CIHAZ_ADI_CIKIS = "Tabby Touch Çıkış";

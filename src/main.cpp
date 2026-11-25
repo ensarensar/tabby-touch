@@ -1,19 +1,14 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <esp_wifi.h>
-#include <WiFiClientSecure.h>
-#include <HTTPClient.h>
-#include <HTTPUpdate.h>
-#include <ArduinoJson.h>
 #include <TFT_eSPI.h>
 #include <XPT2046_Bitbang.h>
 #include <qrcode.h>
-#include <freertos/FreeRTOS.h>
-#include <freertos/semphr.h>
-#include <freertos/task.h>
 #include "pins.h"
 #include "wifi_config.h"
 #include "api_config.h"
+#include "tabby_net.h"
+#include "tabby_ota.h"
 #include "tr_ascii.h"
 
 SET_LOOP_TASK_STACK_SIZE(28672);
@@ -67,16 +62,9 @@ bool buttonDown = false;
 bool buttonFiredThisHold = false;
 uint32_t buttonChangedMs = 0;
 uint32_t buttonIgnoreUntilMs = 0;
-volatile bool pendingRemoteOpen = false;
-SemaphoreHandle_t httpMutex = nullptr;
-bool komutEndpointVar = true;
-uint32_t lastKomut404LogMs = 0;
-uint32_t lastHeartbeatMs = 0;
-uint32_t lastQrMs = 0;
-char qrKod[32] = {0};
-volatile bool qrDirty = false;
-char pendingOtaUrl[256] = {0};
-volatile bool pendingOta = false;
+uint32_t ekranNesil = 0;
+uint32_t ekranAnMs = 0;
+uint8_t ekranTur = 0;
 
 struct Btn {
   int x, y, w, h;
@@ -104,38 +92,13 @@ const int KEY_Y0 = 58;
 
 Key keys[12];
 
-struct ApiResult {
-  int httpCode = 0;
-  bool ok = false;
-  bool success = false;
-  bool found = false;
-  bool verified = false;
-  bool pinBekleniyor = false;
-  bool kayit = false;
-  bool yetkili = false;
-  int oturumId = 0;
-  int ttlSaniye = 0;
-  String regno;
-  String isim;
-  String soyisim;
-  String adSoyad;
-  String message;
-  String yon;
-};
-
 void enterState(AppState s);
 void submitSicil();
-void komutTask(void *arg);
-bool lockHttp(uint32_t ms);
-void unlockHttp();
 void applyRemoteOpen();
 void serviceButton();
 void openDoor(const char *title);
 void showStatus(const char *title, const char *detail);
 void drawIdleQr();
-void maybeRefreshQr();
-void noteOtaFromDoc(const JsonDocument &doc);
-void runPendingOta();
 
 void relayWrite(bool on) {
   const bool level = RELAY_ACTIVE_HIGH ? on : !on;
@@ -359,7 +322,7 @@ bool connectWifi() {
   }
 
   if (WiFi.status() == WL_CONNECTED) {
-    configTime(0, 0, "pool.ntp.org", "time.google.com");
+    tabbyNtpKur();
     showBootScreen("Baglandi", true);
     Serial.printf("WiFi OK SSID=%s RSSI=%d dBm IP=%s MAC=%s\n",
                   WiFi.SSID().c_str(),
@@ -392,53 +355,6 @@ void drawHeader() {
   tft.setTextColor(wifiOk ? COL_ACCENT : TFT_RED, COL_HDR);
   tft.drawString(wifiOk ? WiFi.SSID() : "OFF", 264, 20, 2);
   tft.setTextDatum(TL_DATUM);
-}
-
-String jsonText(const JsonDocument &doc, const char *key) {
-  JsonVariantConst v = doc[key];
-  if (v.isNull()) return "";
-  if (v.is<const char *>()) {
-    const char *s = v.as<const char *>();
-    return (s && s[0]) ? String(s) : "";
-  }
-  if (v.is<int>() || v.is<long>() || v.is<unsigned int>() || v.is<unsigned long>()) {
-    return String(v.as<long>());
-  }
-  if (v.is<long long>()) {
-    return String((long)v.as<long long>());
-  }
-  String s = v.as<String>();
-  return s;
-}
-
-bool jsonBool(const JsonDocument &doc, const char *key) {
-  JsonVariantConst v = doc[key];
-  if (v.isNull()) return false;
-  if (v.is<bool>()) return v.as<bool>();
-  if (v.is<int>() || v.is<long>() || v.is<unsigned int>() || v.is<unsigned long>()) {
-    return v.as<long>() != 0;
-  }
-  if (v.is<const char *>()) {
-    const char *s = v.as<const char *>();
-    if (!s || !s[0]) return false;
-    return strcmp(s, "1") == 0 || strcasecmp(s, "true") == 0;
-  }
-  String s = v.as<String>();
-  s.toLowerCase();
-  return s == "1" || s == "true";
-}
-
-int jsonInt(const JsonDocument &doc, const char *key, int def = 0) {
-  JsonVariantConst v = doc[key];
-  if (v.isNull()) return def;
-  if (v.is<int>() || v.is<long>() || v.is<unsigned int>() || v.is<unsigned long>()) {
-    return v.as<int>();
-  }
-  if (v.is<const char *>()) {
-    const char *s = v.as<const char *>();
-    return (s && s[0]) ? atoi(s) : def;
-  }
-  return def;
 }
 
 void drawButton(const Btn &b, uint16_t fill, const char *label, uint8_t font = 4) {
@@ -536,6 +452,8 @@ void drawIdleQr() {
   const int boxH = frameH - pad * 2;
   tft.fillRect(boxX, boxY, boxW, boxH, TFT_WHITE);
 
+  char qrKod[32];
+  tabbyQrOku(qrKod, sizeof qrKod);
   if (!qrKod[0]) {
     tft.setTextDatum(MC_DATUM);
     tft.setTextColor(TFT_DARKGREY, TFT_WHITE);
@@ -593,7 +511,6 @@ void showIdle() {
   tft.setTextDatum(MR_DATUM);
   tft.drawString(WiFi.macAddress(), 310, 229, 2);
   tft.setTextDatum(TL_DATUM);
-  qrDirty = false;
 }
 
 void showKeypad() {
@@ -698,377 +615,9 @@ void enterState(AppState s) {
   }
 }
 
-String firstRegno(const JsonDocument &doc) {
-  const char *keys[] = {"regno", "regNo", "personelRegNo", "sicilNo", "sicil"};
-  for (const char *k : keys) {
-    String v = jsonText(doc, k);
-    if (v.length()) return v;
-  }
-  return "";
-}
-
-ApiResult parseApi(int httpCode, const String &body) {
-  ApiResult r;
-  r.httpCode = httpCode;
-  if (httpCode < 0) {
-    r.message = "Baglanti hatasi";
-    return r;
-  }
-
-  String trimmed = body;
-  trimmed.trim();
-  JsonDocument doc;
-  DeserializationError err = deserializeJson(doc, trimmed);
-  if (err) {
-    r.message = trimmed.length() ? utf8ToAsciiTr(trimmed) : "Sunucu yaniti okunamadi";
-    Serial.printf("JSON err: %s\n", err.c_str());
-    return r;
-  }
-
-  r.ok = jsonBool(doc, "ok");
-  r.success = jsonBool(doc, "success");
-  r.found = jsonBool(doc, "found");
-  r.verified = jsonBool(doc, "verified");
-  r.pinBekleniyor = jsonBool(doc, "pinBekleniyor");
-  r.kayit = jsonBool(doc, "kayit");
-  r.yetkili = jsonBool(doc, "yetkili") || jsonBool(doc, "izin") ||
-              jsonBool(doc, "izinli") || jsonBool(doc, "guvenliListe") ||
-              jsonBool(doc, "yetki") || jsonBool(doc, "yetkiVar");
-  r.oturumId = jsonInt(doc, "oturumId");
-  r.ttlSaniye = jsonInt(doc, "ttlSaniye");
-  r.regno = firstRegno(doc);
-  r.isim = utf8ToAsciiTr(jsonText(doc, "isim"));
-  r.soyisim = utf8ToAsciiTr(jsonText(doc, "soyisim"));
-  r.adSoyad = utf8ToAsciiTr(jsonText(doc, "adSoyad"));
-  r.message = utf8ToAsciiTr(jsonText(doc, "message"));
-  r.yon = utf8ToAsciiTr(jsonText(doc, "yon"));
-  if (!r.adSoyad.length() && (r.isim.length() || r.soyisim.length())) {
-    r.adSoyad = r.isim;
-    if (r.soyisim.length()) {
-      if (r.adSoyad.length()) r.adSoyad += " ";
-      r.adSoyad += r.soyisim;
-    }
-  }
-  return r;
-}
-
 void applyPerson(const ApiResult &r) {
   if (r.adSoyad.length()) currentName = r.adSoyad;
   if (r.regno.length()) currentRegno = r.regno;
-}
-
-bool messageWantsRestart(const String &message) {
-  String m = message;
-  m.toLowerCase();
-  return m.indexOf("yeniden girin") >= 0 ||
-         m.indexOf("gecerli bir onay kodu yok") >= 0 ||
-         m.indexOf("cok fazla") >= 0;
-}
-
-bool lockHttp(uint32_t ms) {
-  if (!httpMutex) return true;
-  return xSemaphoreTake(httpMutex, pdMS_TO_TICKS(ms)) == pdTRUE;
-}
-
-void unlockHttp() {
-  if (httpMutex) xSemaphoreGive(httpMutex);
-}
-
-String cihazMac() {
-  return WiFi.macAddress();
-}
-
-String komutGetUrl() {
-  String mac = cihazMac();
-  mac.replace(":", "");
-  return String(API_KOMUT_URL) + "?cihazId=" + CIHAZ_ID + "&mac=" + mac;
-}
-
-String komutHeartbeatJson(bool alindi, int komutId) {
-  String json = String("{\"cihazId\":\"") + CIHAZ_ID +
-                "\",\"mac\":\"" + cihazMac() +
-                "\",\"online\":true,\"surum\":\"" + FIRMWARE_VERSION + "\"";
-  if (alindi) {
-    json += ",\"alindi\":true";
-    if (komutId > 0) {
-      json += ",\"komutId\":";
-      json += String(komutId);
-    }
-  }
-  json += "}";
-  return json;
-}
-
-void noteOtaFromDoc(const JsonDocument &doc) {
-  if (!(jsonBool(doc, "guncelle") || jsonBool(doc, "update") ||
-        jsonBool(doc, "ota") || jsonBool(doc, "firmwareUpdate"))) {
-    return;
-  }
-  String ver = jsonText(doc, "surum");
-  if (!ver.length()) ver = jsonText(doc, "version");
-  if (ver.length() && ver == FIRMWARE_VERSION) return;
-
-  String url = jsonText(doc, "url");
-  if (!url.length()) url = jsonText(doc, "firmwareUrl");
-  if (!url.length()) url = jsonText(doc, "otaUrl");
-  if (url.length() < 12 || url.length() >= sizeof(pendingOtaUrl)) return;
-
-  strncpy(pendingOtaUrl, url.c_str(), sizeof(pendingOtaUrl) - 1);
-  pendingOtaUrl[sizeof(pendingOtaUrl) - 1] = 0;
-  pendingOta = true;
-  Serial.printf("OTA teklif surum=%s\n", ver.c_str());
-}
-
-bool komutIcerigiAc(const JsonDocument &doc) {
-  if (jsonBool(doc, "serbestBirak") || jsonBool(doc, "serbest_birak") ||
-      jsonBool(doc, "serbest") || jsonBool(doc, "ac") || jsonBool(doc, "open") ||
-      jsonBool(doc, "kapiAc") || jsonBool(doc, "roleCek") || jsonBool(doc, "pulse") ||
-      jsonBool(doc, "manuelAc") || jsonBool(doc, "manuel_ac") ||
-      jsonBool(doc, "kapiyiAc") || jsonBool(doc, "kirmiziKod") ||
-      jsonBool(doc, "kirmizi_kod") || jsonBool(doc, "kirmizi") ||
-      jsonBool(doc, "redCode") || jsonBool(doc, "alarm")) {
-    return true;
-  }
-  String k = jsonText(doc, "komut");
-  k.toLowerCase();
-  k.replace("_", "");
-  k.replace("-", "");
-  k.replace(" ", "");
-  return k == "ac" || k == "serbest" || k == "serbestbirak" || k == "open" ||
-         k == "pulse" || k == "kapi" || k == "role" || k == "manuel" ||
-         k == "manuelac" || k == "kirmizi" || k == "kirmizikod" || k == "alarm";
-}
-
-bool httpJson(const String &url, const String *postBody, int timeoutMs,
-              int &code, String &body) {
-  if (WiFi.status() != WL_CONNECTED) {
-    code = -1;
-    body = "";
-    return false;
-  }
-
-  WiFiClientSecure client;
-  client.setInsecure();
-  client.setHandshakeTimeout(8);
-
-  HTTPClient http;
-  http.setTimeout(timeoutMs);
-  http.setConnectTimeout(timeoutMs);
-  if (!http.begin(client, url)) {
-    code = -1;
-    body = "";
-    return false;
-  }
-  if (postBody) {
-    http.addHeader("Content-Type", "application/json");
-    code = http.POST(*postBody);
-  } else {
-    code = http.GET();
-  }
-  body = http.getString();
-  http.end();
-  return code > 0;
-}
-
-bool postTabby(const String &payload, ApiResult &out) {
-  if (!lockHttp(API_TIMEOUT_MS + 2000)) {
-    out.httpCode = -1;
-    out.message = "Sunucu mesgul";
-    return false;
-  }
-  int code = 0;
-  String body;
-  bool sent = httpJson(API_GECIS_URL, &payload, API_TIMEOUT_MS, code, body);
-  if (!sent || code == 404) {
-    sent = httpJson(API_URL, &payload, API_TIMEOUT_MS, code, body);
-  }
-  unlockHttp();
-  if (!sent && code < 0) {
-    out.httpCode = -1;
-    out.message = "WiFi yok";
-    return false;
-  }
-  Serial.printf("POST gecis/tabby-touch HTTP %d\n", code);
-  out = parseApi(code, body);
-  Serial.printf("ok=%d found=%d yetkili=%d kayit=%d\n",
-                out.ok, out.found, out.yetkili, out.kayit);
-  return code > 0;
-}
-
-bool getKod(const String &url, ApiResult &out) {
-  if (!lockHttp(API_TIMEOUT_MS + 2000)) {
-    out.httpCode = -1;
-    out.message = "Sunucu mesgul";
-    return false;
-  }
-  int code = 0;
-  String body;
-  bool sent = httpJson(url, nullptr, API_TIMEOUT_MS, code, body);
-  unlockHttp();
-  if (!sent && code < 0) {
-    out.httpCode = -1;
-    out.message = "WiFi yok";
-    return false;
-  }
-  Serial.printf("GET /tabby-touch/kod HTTP %d\n", code);
-  out = parseApi(code, body);
-  Serial.printf("ok=%d verified=%d kayit=%d yon=%s\n",
-                out.ok, out.verified, out.kayit, out.yon.c_str());
-  return code > 0;
-}
-
-void sendDeviceHeartbeat() {
-  if (WiFi.status() != WL_CONNECTED) return;
-  String payload = String("{\"cihazId\":\"") + CIHAZ_ID +
-                   "\",\"mac\":\"" + cihazMac() +
-                   "\",\"ip\":\"" + WiFi.localIP().toString() +
-                   "\",\"online\":true,\"surum\":\"" + FIRMWARE_VERSION + "\"}";
-  int code = 0;
-  String body;
-  httpJson(API_HEARTBEAT_URL, &payload, HEARTBEAT_TIMEOUT_MS, code, body);
-  Serial.printf("Heartbeat %s ip=%s v=%s HTTP %d\n",
-                cihazMac().c_str(),
-                WiFi.localIP().toString().c_str(),
-                FIRMWARE_VERSION, code);
-  if (code < 200 || code >= 300) return;
-  JsonDocument doc;
-  if (!deserializeJson(doc, body)) noteOtaFromDoc(doc);
-}
-
-void fetchQrOnce() {
-  if (WiFi.status() != WL_CONNECTED) return;
-  String payload = String("{\"cihazId\":\"") + CIHAZ_ID +
-                   "\",\"mac\":\"" + cihazMac() + "\"}";
-  int code = 0;
-  String body;
-  if (!httpJson(API_QR_URL, &payload, QR_TIMEOUT_MS, code, body)) return;
-  if (code < 200 || code >= 300) {
-    Serial.printf("QR HTTP %d\n", code);
-    return;
-  }
-  JsonDocument doc;
-  if (deserializeJson(doc, body)) return;
-  String kod = jsonText(doc, "kod");
-  if (!kod.length()) kod = jsonText(doc, "qrKod");
-  if (!kod.length()) kod = jsonText(doc, "qr");
-  if (!kod.length()) kod = jsonText(doc, "code");
-  if (!kod.length()) kod = jsonText(doc, "token");
-  kod.trim();
-  if (kod.length() < 16 || kod.length() > 30) {
-    Serial.printf("QR kod uzunluk %d\n", kod.length());
-    return;
-  }
-  strncpy(qrKod, kod.c_str(), sizeof(qrKod) - 1);
-  qrKod[sizeof(qrKod) - 1] = 0;
-  qrDirty = true;
-}
-
-void maybeRefreshQr() {
-  const uint32_t now = millis();
-  if (lastQrMs != 0 &&
-      (int32_t)(now - lastQrMs) < (int32_t)QR_REFRESH_MS) {
-    return;
-  }
-  if (!lockHttp(80)) return;
-  lastQrMs = now;
-  fetchQrOnce();
-  unlockHttp();
-}
-
-void runPendingOta() {
-  if (!pendingOta || !pendingOtaUrl[0]) return;
-  pendingOta = false;
-  showStatus("Guncelleniyor", FIRMWARE_VERSION);
-  Serial.printf("OTA basliyor %s\n", pendingOtaUrl);
-  if (!lockHttp(2000)) {
-    showStatus("Guncelleme", "Sunucu mesgul");
-    delay(1500);
-    if (state == AppState::Idle) showIdle();
-    return;
-  }
-  WiFiClientSecure client;
-  client.setInsecure();
-  client.setTimeout(30);
-  httpUpdate.rebootOnUpdate(true);
-  t_httpUpdate_return ret = httpUpdate.update(client, pendingOtaUrl);
-  unlockHttp();
-  pendingOtaUrl[0] = 0;
-  if (ret == HTTP_UPDATE_OK) return;
-  Serial.printf("OTA hata %d\n", (int)ret);
-  showStatus("Guncelleme hata", "Tekrar denenecek");
-  delay(2000);
-  if (state == AppState::Idle) showIdle();
-}
-
-void maybeSendHeartbeat() {
-  const uint32_t now = millis();
-  if (lastHeartbeatMs != 0 &&
-      (int32_t)(now - lastHeartbeatMs) < (int32_t)HEARTBEAT_MS) {
-    return;
-  }
-  if (!lockHttp(80)) return;
-  lastHeartbeatMs = now;
-  sendDeviceHeartbeat();
-  unlockHttp();
-}
-
-void ackKomut(int komutId) {
-  String payload = komutHeartbeatJson(true, komutId);
-  int code = 0;
-  String body;
-  httpJson(API_KOMUT_URL, &payload, KOMUT_TIMEOUT_MS, code, body);
-}
-
-bool pollKomutOnce() {
-  int code = 0;
-  String body;
-  String payload = komutHeartbeatJson(false, 0);
-  bool sent = httpJson(API_KOMUT_URL, &payload, KOMUT_TIMEOUT_MS, code, body);
-  if (!sent || code == 404) {
-    sent = httpJson(komutGetUrl(), nullptr, KOMUT_TIMEOUT_MS, code, body);
-  }
-  if (code == 404) {
-    komutEndpointVar = false;
-    if (lastKomut404LogMs == 0 || millis() - lastKomut404LogMs > 60000) {
-      lastKomut404LogMs = millis();
-      Serial.println("Komut ucu yok: POST/GET /tabby-touch/komut");
-    }
-    return false;
-  }
-  komutEndpointVar = true;
-  if (code < 0) return true;
-
-  JsonDocument doc;
-  if (deserializeJson(doc, body)) return true;
-  noteOtaFromDoc(doc);
-  if (!komutIcerigiAc(doc)) return true;
-
-  pendingRemoteOpen = true;
-  int komutId = jsonInt(doc, "komutId");
-  ackKomut(komutId);
-  Serial.printf("Uzaktan serbest komutId=%d\n", komutId);
-  return true;
-}
-
-void komutTask(void *arg) {
-  (void)arg;
-  vTaskDelay(pdMS_TO_TICKS(4000));
-  lastHeartbeatMs = 0;
-  for (;;) {
-    uint32_t wait = KOMUT_POLL_MS;
-    if (WiFi.status() == WL_CONNECTED) {
-      maybeSendHeartbeat();
-      maybeRefreshQr();
-      if (lockHttp(80)) {
-        bool endpointOk = pollKomutOnce();
-        unlockHttp();
-        if (!endpointOk) wait = 8000;
-      }
-    } else {
-      wait = 4000;
-    }
-    vTaskDelay(pdMS_TO_TICKS(wait));
-  }
 }
 
 void applyRemoteOpen() {
@@ -1112,10 +661,9 @@ void submitSicil() {
   currentRegno = pinBuf;
   showStatus("Sicil kontrol...", currentRegno.c_str());
 
-  String payload = String("{\"regno\":\"") + currentRegno + "\"}";
-  Serial.printf("Sicil POST regno=%s\n", currentRegno.c_str());
+  Serial.printf("Sicil sorgu regno=%s\n", currentRegno.c_str());
   ApiResult r;
-  postTabby(payload, r);
+  tabbyGecisSor(currentRegno.c_str(), r, 22000);
   applyPerson(r);
 
   const bool found = r.found || currentName.length();
@@ -1215,23 +763,43 @@ void setup() {
   ts.begin();
   ts.setCalibration(180, 3700, 280, 3800);
 
-  httpMutex = xSemaphoreCreateMutex();
+  tabbyOtaBoot();
   connectWifi();
-  xTaskCreatePinnedToCore(komutTask, "komut", 12288, nullptr, 1, nullptr, 0);
+  tabbyNetBaslat();
   enterState(AppState::Idle);
 }
 
 void loop() {
   serviceRelay();
   serviceButton();
-  if (pendingOta) runPendingOta();
-  if (pendingRemoteOpen) {
-    pendingRemoteOpen = false;
-    applyRemoteOpen();
+
+  char otaBaslik[24];
+  char otaDetay[48];
+  uint8_t tur = 0;
+  uint32_t nesil = 0;
+  if (tabbyEkranOku(otaBaslik, sizeof otaBaslik, otaDetay, sizeof otaDetay, &tur,
+                    &nesil) &&
+      nesil != ekranNesil) {
+    ekranNesil = nesil;
+    ekranTur = tur;
+    ekranAnMs = millis();
+    if (tur) showStatus(otaBaslik, otaDetay);
   }
-  if (qrDirty && state == AppState::Idle && remoteBannerUntilMs == 0) {
+  if (ekranTur == 2 && state == AppState::Idle && ekranAnMs != 0 &&
+      (int32_t)(millis() - ekranAnMs) > 2500) {
+    ekranTur = 0;
+    ekranAnMs = 0;
+    showIdle();
+  }
+
+  if (tabbyOtaSuruyor()) {
+    delay(20);
+    return;
+  }
+
+  if (tabbyKapiCek()) applyRemoteOpen();
+  if (tabbyQrKirli() && state == AppState::Idle && remoteBannerUntilMs == 0) {
     drawIdleQr();
-    qrDirty = false;
   }
   if (remoteBannerUntilMs != 0 &&
       (int32_t)(millis() - remoteBannerUntilMs) >= 0) {
